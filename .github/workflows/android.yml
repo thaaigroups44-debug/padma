@@ -12,19 +12,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Get project files
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Install Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -34,6 +34,11 @@ jobs:
         with:
           packages: platform-tools
           accept-android-sdk-licenses: true
+
+      - name: Install Python image library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pil
 
       - name: Install project dependencies
         run: npm install
@@ -51,26 +56,27 @@ jobs:
           python3 - <<'PY'
           from PIL import Image
 
+          # Create Android app icon
           image = Image.open("padma.png").convert("RGBA")
-
-          # Create a square icon with transparent padding
           icon = Image.new("RGBA", (1024, 1024), (255, 255, 255, 0))
+
           image.thumbnail((900, 900))
           x = (1024 - image.width) // 2
           y = (1024 - image.height) // 2
           icon.alpha_composite(image, (x, y))
           icon.save("assets/icon.png")
 
-          # Create a square splash image on a white background
-          splash = Image.new("RGB", (2732, 2732), "white")
+          # Create splash screen
           logo = Image.open("padma.png").convert("RGBA")
           logo.thumbnail((1200, 1200))
+
+          splash = Image.new("RGBA", (2732, 2732), "white")
           x = (2732 - logo.width) // 2
           y = (2732 - logo.height) // 2
-          splash.paste(logo, (x, y), logo)
-          splash.save("assets/splash.png")
+          splash.alpha_composite(logo, (x, y))
+          splash.convert("RGB").save("assets/splash.png")
 
-          print("Icon and splash images created.")
+          print("Icon and splash images created successfully.")
           PY
 
           cp padma.png www/padma.png
@@ -87,12 +93,14 @@ jobs:
           from pathlib import Path
           import re
 
-          # Capacitor keeps Android system bars visible by default.
+          # Keep Android status and navigation bars visible.
           # Do not enable immersive fullscreen mode.
+
           gradle_file = Path("android/variables.gradle")
 
           if gradle_file.exists():
               content = gradle_file.read_text()
+
               updated, count = re.subn(
                   r'targetSdkVersion\s*=\s*\d+',
                   'targetSdkVersion = 34',
@@ -101,17 +109,17 @@ jobs:
 
               if count:
                   gradle_file.write_text(updated)
-                  print("Android target SDK configured.")
+                  print("Target SDK configured.")
               else:
-                  print("Using the default target SDK.")
+                  print("Default target SDK retained.")
           else:
-              print("Using the default Android SDK configuration.")
+              print("Default Android SDK configuration retained.")
           PY
 
       - name: Sync PADMA RMS files
         run: npx cap sync android
 
-      - name: Build APK
+      - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
