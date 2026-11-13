@@ -1,0 +1,10 @@
+
+{
+  "appId": "com.padma.rms",
+  "appName": "PADMA RMS",
+  "webDir": "www",
+  "backgroundColor": "#ffffff",
+  "android": {
+    "allowMixedContent": false
+  }
+}
