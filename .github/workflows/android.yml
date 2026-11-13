@@ -35,19 +35,91 @@ jobs:
       - name: Install project dependencies
         run: npm install
 
+      - name: Prepare PADMA logo images
+        run: |
+          python3 -m pip install pillow
+          mkdir -p assets
+
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+
+          logo = Image.open("padma.png").convert("RGBA")
+
+          # Prepare a square launcher icon with transparent padding.
+          icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+          mark = logo.copy()
+          mark.thumbnail((820, 820), Image.Resampling.LANCZOS)
+          icon.alpha_composite(mark, ((1024-mark.width)//2, (1024-mark.height)//2))
+          icon.save("assets/icon-only.png")
+
+          # Prepare a white Android splash screen with the logo centered.
+          splash = Image.new("RGBA", (2732, 2732), (255, 255, 255, 255))
+          mark = logo.copy()
+          mark.thumbnail((1100, 1100), Image.Resampling.LANCZOS)
+          splash.alpha_composite(mark, ((2732-mark.width)//2, (2732-mark.height)//2))
+          splash.save("assets/splash.png")
+
+          # Also make the logo available to the HTML application.
+          Path("www/padma.png").write_bytes(Path("padma.png").read_bytes())
+          PY
+
       - name: Create Android project
         run: npx cap add android
 
-      - name: Sync PADMA RMS files
+      - name: Generate Android app icon and splash screen
+        run: npx capacitor-assets generate --android
+
+      - name: Configure Android screen bars
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Keep the normal Android status and navigation bars visible.
+          files = list(Path("android/app/src/main").rglob("MainActivity.java"))
+          if not files:
+              raise SystemExit("MainActivity.java not found")
+
+          p = files[0]
+          s = p.read_text()
+          needle = "super.onCreate(savedInstanceState);"
+          if needle not in s:
+              raise SystemExit("Could not find MainActivity onCreate")
+
+          if "FLAG_FULLSCREEN" not in s:
+              s = s.replace(
+                  needle,
+                  needle + """
+                  getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                  getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_VISIBLE);
+                  """
+              )
+          p.write_text(s)
+
+          # Avoid Android 15 forced edge-to-edge layout for this private APK.
+          v = Path("android/variables.gradle")
+          if v.exists():
+              content = v.read_text()
+              content, count = re.subn(
+                  r'targetSdkVersion\\s*=\\s*\\d+',
+                  'targetSdkVersion = 34',
+                  content
+              )
+              if count:
+                  v.write_text(content)
+          PY
+
+      - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Build APK
+      - name: Build Android APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload PADMA RMS APK
         uses: actions/upload-artifact@v4
         with:
           name: PADMA-RMS-Android-APK
