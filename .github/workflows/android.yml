@@ -7,6 +7,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,45 +32,53 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools'
+          packages: platform-tools
           accept-android-sdk-licenses: true
 
       - name: Install project dependencies
         run: npm install
 
-      - name: Prepare PADMA logo images
+      - name: Check required files
         run: |
-          python3 -m pip install pillow
-          mkdir -p assets
+          test -f www/index.html
+          test -f padma.png
+          echo "PADMA RMS files found."
+
+      - name: Prepare app icon and splash screen
+        run: |
+          mkdir -p assets www
 
           python3 - <<'PY'
           from PIL import Image
-          from pathlib import Path
 
+          image = Image.open("padma.png").convert("RGBA")
+
+          # Create a square icon with transparent padding
+          icon = Image.new("RGBA", (1024, 1024), (255, 255, 255, 0))
+          image.thumbnail((900, 900))
+          x = (1024 - image.width) // 2
+          y = (1024 - image.height) // 2
+          icon.alpha_composite(image, (x, y))
+          icon.save("assets/icon.png")
+
+          # Create a square splash image on a white background
+          splash = Image.new("RGB", (2732, 2732), "white")
           logo = Image.open("padma.png").convert("RGBA")
-
-          # Prepare a square launcher icon with transparent padding.
-          icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-          mark = logo.copy()
-          mark.thumbnail((820, 820), Image.Resampling.LANCZOS)
-          icon.alpha_composite(mark, ((1024-mark.width)//2, (1024-mark.height)//2))
-          icon.save("assets/icon-only.png")
-
-          # Prepare a white Android splash screen with the logo centered.
-          splash = Image.new("RGBA", (2732, 2732), (255, 255, 255, 255))
-          mark = logo.copy()
-          mark.thumbnail((1100, 1100), Image.Resampling.LANCZOS)
-          splash.alpha_composite(mark, ((2732-mark.width)//2, (2732-mark.height)//2))
+          logo.thumbnail((1200, 1200))
+          x = (2732 - logo.width) // 2
+          y = (2732 - logo.height) // 2
+          splash.paste(logo, (x, y), logo)
           splash.save("assets/splash.png")
 
-          # Also make the logo available to the HTML application.
-          Path("www/padma.png").write_bytes(Path("padma.png").read_bytes())
+          print("Icon and splash images created.")
           PY
+
+          cp padma.png www/padma.png
 
       - name: Create Android project
         run: npx cap add android
 
-      - name: Generate Android app icon and splash screen
+      - name: Generate Android icons and splash screen
         run: npx capacitor-assets generate --android
 
       - name: Configure Android screen bars
@@ -76,51 +87,39 @@ jobs:
           from pathlib import Path
           import re
 
-          # Keep the normal Android status and navigation bars visible.
-          files = list(Path("android/app/src/main").rglob("MainActivity.java"))
-          if not files:
-              raise SystemExit("MainActivity.java not found")
+          # Capacitor keeps Android system bars visible by default.
+          # Do not enable immersive fullscreen mode.
+          gradle_file = Path("android/variables.gradle")
 
-          p = files[0]
-          s = p.read_text()
-          needle = "super.onCreate(savedInstanceState);"
-          if needle not in s:
-              raise SystemExit("Could not find MainActivity onCreate")
-
-          if "FLAG_FULLSCREEN" not in s:
-              s = s.replace(
-                  needle,
-                  needle + """
-                  getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                  getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_VISIBLE);
-                  """
-              )
-          p.write_text(s)
-
-          # Avoid Android 15 forced edge-to-edge layout for this private APK.
-          v = Path("android/variables.gradle")
-          if v.exists():
-              content = v.read_text()
-              content, count = re.subn(
-                  r'targetSdkVersion\\s*=\\s*\\d+',
+          if gradle_file.exists():
+              content = gradle_file.read_text()
+              updated, count = re.subn(
+                  r'targetSdkVersion\s*=\s*\d+',
                   'targetSdkVersion = 34',
                   content
               )
+
               if count:
-                  v.write_text(content)
+                  gradle_file.write_text(updated)
+                  print("Android target SDK configured.")
+              else:
+                  print("Using the default target SDK.")
+          else:
+              print("Using the default Android SDK configuration.")
           PY
 
-      - name: Sync Capacitor
+      - name: Sync PADMA RMS files
         run: npx cap sync android
 
-      - name: Build Android APK
+      - name: Build APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload PADMA RMS APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PADMA-RMS-Android-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
